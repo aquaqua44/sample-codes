@@ -1,556 +1,484 @@
-from PySide6.QtWidgets import QWidget, QLabel, QSizePolicy, QVBoxLayout, QApplication, QScrollArea, QHBoxLayout, QMainWindow, QFrame
-from PySide6.QtCore import QPoint, Signal, Qt, QObject, QEvent, QSize
-from PySide6.QtGui import QPaintEvent, QPainter, QBrush, QColor, QPen, QRegion
-import random, string
-
-from drag_widget import DragAreaBase, DragItemBase
-
-from PySide6.QtWidgets import QWidget, QApplication
-from PySide6.QtCore import QRect, Qt, Signal, QPoint, QMargins, QTimer
-from PySide6.QtGui import (
-    QPainter, QFontMetrics, QMouseEvent, QColor, QResizeEvent, 
-    QPen, QBrush, QPaintEvent, QStaticText, QTransform, QLinearGradient, QFont
+from PySide6.QtWidgets import (
+    QApplication, QTreeView, QWidget, QVBoxLayout,
+    QHeaderView, QAbstractItemView, QComboBox, QCheckBox
 )
+from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent
+from PySide6.QtCore import Qt, QModelIndex, Signal
+import sys, time
 
-import time
+from global_data import GlobalData
+from database_manager import DatabaseManager
 
+class CheckTreeView(QTreeView):
+    # チェック済み子ノードテキストリストを通知
+    item_selection_changed = Signal(list)
 
-PROJECT_COUNT = 4
-USER_COUNT = 10
-GROUP_COUNT = 10
-
-def generate_random_items(num_items, prefix=""):
-    num_items = random.randint(2, 6)
-    items = []
-
-    for i in range(1, num_items + 1):
-        item_id = f"id{i:04d}"
-        name_length = random.randint(1, 5)
-        name = ''.join(random.choices(string.ascii_letters, k=name_length))
-        items.append((item_id, f"{prefix} {name}"))
-
-    return items
-
-class VirtualBuittonHeader:
-
-    @property
-    def header_size(self)->QSize:
-        return self._header_size
-    
-    @property
-    def parent_header_height(self)->int:
-        return self._parent_header_height
-    
-    @property
-    def button_data(self)->tuple[str, QStaticText, int, QRect]:
-        return self._button_data
-
-    def __init__(self, item_widget:QWidget, header_min_height:int, margin:QMargins, parent=None):
-
-        self._item_widget = item_widget
-        self._min_header_height = header_min_height
-
-        self._header_size:QSize = QSize(0,0)
-        self._parent_header_height = 0
-
-        """
-        プロパティ
-        """
-
-        # レイアウト設定
-        
-        self._button_padding_x = 10
-        self._button_height = 16
-        self._button_max_width = 200
-
-        # コンテンツアイテムマージン
-        self._content_item_margin = margin
-
-        # ボタンレイアウト設定
-        self._margin_left = 10
-        self._margin_top = 6
-        self._margin_right = 10
-        self._margin_bottom = 10
-        self._layout_spacing_x = 4
-        self._layout_spacing_y = 4
-
-        self._title_padding_x = 10
-
-        self._title_font = QFont("Yu Gothic", 10)
-        self._title_font.setBold(True)
-
-        self._button_font = QFont("Yu Gothic", 8)
-        self._button_font.setBold(False)
-
-        
-        """
-        変数66
-        """
-        # ヘッダー
-
-        self._header_pos_y = 0
-        self._before_pos_y = 0
-
-        self._parent_header_height = 0
-
-        self._title = ""
-        self._title_width = 0
-        self._button_data = []
-
-        self._mouse_press_pos: None | QPoint = None
-        self._is_mouse_pressed = False
-        self._current_index = -1
-        self._is_title_hover = False
-
-        self._button_bg_color = QColor(230,230,230)
-        self._button_hover_bg_color = self._button_bg_color.lighter(120)
-        self._button_press_bg_color = self._button_bg_color.darker(120)
-
-    def set_parent_header_height(self, height:int):
-        self._parent_header_height = height
-
-
-
-    def set_title(self, title:str):
-        """タイトルを設定"""
-        self._title = title
-        fm = QFontMetrics(self._title_font)
-        self._title_width = fm.horizontalAdvance(title) + 10
-
-    def set_buttons(self, button_data:list):
-        """ボタンデータからボタン情報を生成"""
-        self._button_data.clear()
-        fm = QFontMetrics(self._button_font)
-
-        for btn_id, text in button_data:
-            max_content_width = self._button_max_width - self._button_padding_x * 2
-            elided = fm.elidedText(text, Qt.TextElideMode.ElideRight, max_content_width)
-
-            static_text = QStaticText(elided)
-            static_text.setTextFormat(Qt.TextFormat.PlainText)
-            static_text.prepare(QTransform(), self._button_font)
-
-            display_width = fm.horizontalAdvance(elided)
-            total_width = display_width + self._button_padding_x * 2
-            total_width = min(total_width, self._button_max_width)
-
-            self._button_data.append((btn_id, static_text, total_width, QRect(0, 0, total_width, self._button_height)))
-
-
-class ProjectItem(DragItemBase):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.set_height()
+        self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
-    def paintEvent(self, event:QPaintEvent):
+        # モデル初期化
+        self._model = QStandardItemModel()
+        self._model.setColumnCount(2)
+        self._model.setHorizontalHeaderLabels(["項目", "ID"])
+        super().setModel(self._model)
 
-        # 背景の描画
-        painter = QPainter(self)
-        painter.setBrush(QBrush(QColor(150, 150, 255)))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(self.rect(), 10, 10)
-        painter.end()
-    
-    def set_height(self):
-        height = random.randint(24,72)
-        self.setFixedHeight(height) #　アイテムの高さ
-
-    def mousePressEvent(self, event):
-        print("ProjectItem Clicked")
-        event.accept()
-        # return super().mousePressEvent(event)
-
-
-class ProjectArea(DragAreaBase):
-
-    def __init__(self, parent=None):
-        super().__init__(ProjectItem)
-        
-
-    def paintEvent(self, event:QPaintEvent):
-
-        # 背景の描画
-        painter = QPainter(self)
-        painter.setBrush(QBrush(QColor(220, 220, 255)))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRect(self.rect())
-        painter.end()
-
-class UserItem(VirtualBuittonHeader, DragItemBase):
-    def __init__(self, item_id:str, item_name:str, parent=None):
-        DragItemBase.__init__(self, parent=parent)
-        VirtualBuittonHeader.__init__(self, self, 24, QMargins(20,0,0,20))
-
-        layout = QVBoxLayout(self)
-        self._area = ProjectArea()
-
-        layout.addWidget(self.area)
+        # 固定設定
+        self.setItemsExpandable(False)
+        self.setExpandsOnDoubleClick(False)
+        self.setRootIsDecorated(False)
 
         
-        button_data = generate_random_items(PROJECT_COUNT, "Project")
 
-        for i, k in button_data:
-            item = ProjectItem()
-            self._area.add_item(item)
+    def update_date(self, data: dict[tuple[str, str], list[tuple[str, str]]]):
+        """外部データ dict からモデルを再構築し、checked_ids に含まれる子IDをチェック済みにする"""
 
-        self.set_buttons(button_data)
+        scroll_value = self.verticalScrollBar().value()
+        checked_ids = self.get_checked_ids()
 
+        self._model.clear()
 
-    def paintEvent(self, event:QPaintEvent):
-
-        # 背景の描画
-        painter = QPainter(self)
-        painter.setBrush(QBrush(QColor(150, 255, 150)))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(self.rect(), 10, 10)
-        painter.end()
-    
-
-class UserArea(DragAreaBase):
-
-    def __init__(self, parent=None):
-        super().__init__(UserItem)
-        
-        self.layout().setContentsMargins(0,0,0,0)
-
-    def paintEvent(self, event:QPaintEvent):
-
-        # 背景の描画
-        painter = QPainter(self)
-        painter.setBrush(QBrush(QColor(220, 255, 220)))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRect(self.rect())
-        painter.end()
-
-
-class GroupItem(VirtualBuittonHeader, DragItemBase):
-    """
-    グループアイテム 中に ユーザーアイテム
-    """
-    def __init__(self, parent=None):
-        DragItemBase.__init__(self, parent=parent)
-        VirtualBuittonHeader.__init__(self, self, 24, QMargins(0,0,0,20))
-        
-        layout = QVBoxLayout(self)
-        self._area = UserArea()
-
-        layout.addWidget(self.area)
-
-        button_data = generate_random_items(USER_COUNT, "User")
-
-        for i, k in button_data:
-            item = UserItem(i, k)
-            self._area.add_item(item)
-
-        self.set_buttons(button_data)
-
-
-    def paintEvent(self, event:QPaintEvent):
-
-        # 背景の描画
-        painter = QPainter(self)
-        painter.setBrush(QBrush(QColor(250, 150, 150)))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(self.rect(), 10, 10)
-        painter.end()
-
-
-class GroupArea(DragAreaBase):
-
-    def __init__(self, parent=None):
-        super().__init__(GroupItem)
-
-        self.layout().setContentsMargins(0,0,0,0)
-        
-        "グループアイテム作成"
-        for i in range(GROUP_COUNT):
-            item = GroupItem()
-            self.add_item(item)
-
-    def paintEvent(self, event:QPaintEvent):
-
-        # 背景の描画
-        painter = QPainter(self)
-        painter.setBrush(QBrush(QColor(255, 220, 220)))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRect(self.rect())
-        painter.end()
-
-
-
-class CustomScrollArea(QScrollArea):
-    size_changed = Signal()
-    def __init__(self, parent=None):
-        super().__init__(parent=parent)
-
-    def resizeEvent(self, arg__1):
-        self.size_changed.emit()
-        return super().resizeEvent(arg__1)
-
-
-
-class HeaderPainter(QWidget):
-    def __init__(self, scroll_area:CustomScrollArea):
-        super().__init__(parent=scroll_area.viewport())
-        self._scroll_area = scroll_area
-        self._scroll_area.setFrameStyle(QFrame.Shape.NoFrame)
-        self._viewport = scroll_area.viewport()
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setMouseTracking(True)
-
-        self._curren_button = (None, None) 
-
-        # サイズ変更時 ボタン列変更
-        scroll_area.size_changed.connect(self._fit_viewport)
-        self._scroll_area.verticalScrollBar().valueChanged.connect(self.paint_header)
-
-        self._resize_timer = QTimer(self)
-        self._resize_timer.setSingleShot(True)
-        self._resize_timer.timeout.connect(self._on_resize_finished)
-
-        self._on_resize_finished()
-
-    def _on_resize_finished(self):
-
-        items = self.get_virtual_button_header_items(first_cls=GroupItem)
-
-        for item in items:
-            self.layout_buttons(item)
-        widget = self._scroll_area.widget()
-
-        widget.updateGeometry()
-        widget.adjustSize()  
-
-
-        widget.updateGeometry()
-        widget.adjustSize()  
-
-        self.paint_header()
-
-        self.update()
-    
-    def _fit_viewport(self):
-        
-        self.setGeometry(self._viewport.geometry())
-        self._resize_timer.start(100)
-
-    
-    def layout_buttons(self, item:VirtualBuittonHeader|DragItemBase):
-        """各ボタンのrectとヘッダーの高さを計算。"""
-
-        header_width = item.width()
-        
-        # マージンなどのレイアウト用変数
-        x_margin = item._title_padding_x + item._title_width + item._margin_left
-        top_margin = item._margin_top
-        right_margin = item._margin_right
-        bottom_margin = item._margin_bottom
-        spacing_x = item._layout_spacing_x
-        spacing_y = item._layout_spacing_y
-        line_height = item._button_height
-
-        # === 1. 行ごとにグループ化 ===
-        lines = []
-        current_line = []
-        current_line_width = x_margin
-
-        for btn_id, static_text, width, _ in item._button_data:
-            fits = current_line and (current_line_width + width + right_margin > header_width)
-            if fits:
-                lines.append(current_line)
-                current_line = []
-                current_line_width = x_margin
-
-            current_line.append((btn_id, static_text, width))
-            current_line_width += width + spacing_x
-
-        if current_line:
-            lines.append(current_line)
-
-        # === 2. 行単位で QRect を生成 ===
-        y = top_margin
-        new_buttons = []
-
-        for line in lines:
-            x = x_margin
-            for btn_id, static_text, width in line:
-                rect = QRect(x, y, width, line_height)
-                new_buttons.append((btn_id, static_text, width, rect))
-                x += width + spacing_x
-            y += line_height + spacing_y
-
-        # === 3. 結果を反映 ===
-        item._button_data = new_buttons
-        header_height = y + bottom_margin - spacing_y
-        header_height = max(header_height, item._min_header_height)
-
-        item._header_size = QSize(header_width, header_height)
-
-        parent_item = item.area.parent()
-        if isinstance(parent_item, VirtualBuittonHeader):
-            item.set_parent_header_height(parent_item.header_size.height())
-
-        margin = item._content_item_margin + QMargins(0, header_height, 0, 0)
-        item._item_widget.layout().setContentsMargins(margin)
-
-
-    def mousePressEvent(self, event):
-        print("header_clicked")
-        return super().mousePressEvent(event)
-    
-    def mouseMoveEvent(self, event:QMouseEvent):
-
-        item = self._scroll_area.widget().childAt(event.position().toPoint())
-        pos = event.position().toPoint()
-        target_item = None
-        for item, item_rect in reversed(list(self._virtual_header_items.items())):
-            if item_rect.contains(pos):
-                target_item = item
-                break
-        
-        target_id = None
-        for btn_id, static_text, width, button_rect in item.button_data:
-            button_rect:QRect
-            button_rect = button_rect.translated(0, item_rect.y())
-
-            if button_rect.contains(pos):
-                target_id = btn_id
-                break
-
-        self._curren_button = (target_item, target_id)
-
-        self.update()
-    
-    def get_virtual_button_header_items(self, first_cls=UserItem)->list[VirtualBuittonHeader|DragItemBase]:
-        items:list = self._scroll_area.findChildren(VirtualBuittonHeader)
-        items.sort(key=lambda obj: not isinstance(obj, first_cls))
-        return items
-
-    def get_visible_items(self) -> dict[VirtualBuittonHeader|DragItemBase, QRect]:
-        viewport = self._scroll_area.viewport()
-        vp_height = viewport.height()
-        visible_items = {}
-
-        # UserItem を一度だけキャッシュしておくとさらに高速
-        for item in self.get_virtual_button_header_items():
-            item:VirtualBuittonHeader|DragItemBase
-            if not item.isVisible():
+        for (parent_text, parent_id), children in data.items():
+            if not children:
                 continue
+            # 親アイテム
+            p_item = QStandardItem(parent_text)
+            p_item.setEditable(False)
+            p_item.setCheckable(True)
+            p_item.setCheckState(Qt.CheckState.Unchecked)
+            p_id = QStandardItem(parent_id)
+            p_id.setEditable(False)
 
-            # item の左上 (0,0) を viewport 座標系にマップ
-            y_in_vp = item.mapTo(viewport, QPoint(0, 0)).y()
-            item_h = item.height()
+            # 子アイテム
+            for c_text, c_id in children:
+                c_item = QStandardItem(c_text)
+                c_item.setEditable(False)
+                c_item.setCheckable(True)
+                c_item.setCheckState(Qt.CheckState.Checked if c_id in checked_ids else Qt.CheckState.Unchecked)
 
-            # 「少しでも見えていれば可視」とみなす
-            if y_in_vp + item_h >= 0 and y_in_vp <= vp_height:
-                visible_items[item] = QRect(0,0,0,0)
+                c_id_item = QStandardItem(c_id)
+                c_id_item.setEditable(False)
+
+                p_item.appendRow([c_item, c_id_item])
+
+            # 親の初期状態を子のチェック状況から設定
+            self._update_parent_state(p_item)
+
+            self._model.appendRow([p_item, p_id])
+
+        self.expandAll()
+        self.verticalScrollBar().setValue(scroll_value)
+        self.setColumnWidth(0,200)
+
+    def set_items_checked(self, checked_ids: list[str]):
+        """
+        渡された子IDリストに一致するものをチェックON、
+        それ以外をチェックOFF にし、親ノード状態も更新する。
+        """
+        root = self._model.invisibleRootItem()
+        for pi in range(root.rowCount()):
+            parent = root.child(pi, 0)
+            # 子ノードをすべて走査
+            for ci in range(parent.rowCount()):
+                child = parent.child(ci, 0)
+                id_item = parent.child(ci, 1)
+                if not child.isCheckable():
+                    continue
+                # ID一致でチェックON / それ以外OFF
+                if id_item.text() in checked_ids:
+                    child.setCheckState(Qt.CheckState.Checked)
+                else:
+                    child.setCheckState(Qt.CheckState.Unchecked)
+            # 子を更新したら親ノードの状態を合わせる
+            self._update_parent_state(parent)
+
+    def _update_parent_state(self, parent: QStandardItem):
+        """ある親アイテムについて子のチェック状況を見て部分/全/無チェックを設定"""
+        total = parent.rowCount()
+        checked = sum(parent.child(i,0).checkState() == Qt.CheckState.Checked for i in range(total))
+        if checked == 0:
+            parent.setCheckState(Qt.CheckState.Unchecked)
+        elif checked == total:
+            parent.setCheckState(Qt.CheckState.Checked)
+        else:
+            parent.setCheckState(Qt.CheckState.PartiallyChecked)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        index = self.indexAt(event.position().toPoint())
+        self._on_clicked(index)
+        event.accept()
+
+    def _on_clicked(self, index: QModelIndex):
+        if not index.isValid():
+            return
+        # まず 0 列目に揃える
+        if index.column() != 0:
+            index = index.sibling(index.row(), 0)
+
+        item = self._model.itemFromIndex(index)
+        if not item or not item.isCheckable():
+            return
+
+        if item.hasChildren():
+            # 親項目をクリックした場合
+            current = item.checkState()
+            if current in (Qt.CheckState.Unchecked, Qt.CheckState.PartiallyChecked):
+                new_state = Qt.CheckState.Checked
+            else:  # Qt.CheckState.Checked のとき
+                new_state = Qt.CheckState.Unchecked
+        else:
+            # 子項目は従来どおりトグル
+            new_state = (
+                Qt.CheckState.Checked
+                if item.checkState() == Qt.CheckState.Unchecked
+                else Qt.CheckState.Unchecked
+            )
+
+        # 自分自身に適用
+        item.setCheckState(new_state)
+
+        # 親⇔子の同期
+        if item.hasChildren():
+            # 親クリック → 全子に new_state を適用
+            for i in range(item.rowCount()):
+                child = item.child(i, 0)
+                child.setCheckState(new_state)
+        else:
+            # 子クリック → 親を再計算
+            parent = item.parent()
+            if parent:
+                self._update_parent_state(parent)
+
+        # チェック済み子ノードIDリストを取得してシグナル発火
+        checked = self.get_checked_ids()
+        self.item_selection_changed.emit(checked)
+
+    def get_checked_ids(self) -> list[str]:
+        checked_ids: list[str] = []
+        root = self._model.invisibleRootItem()
+        for pi in range(root.rowCount()):
+            parent = root.child(pi, 0)
+            for ci in range(parent.rowCount()):
+                child_item = parent.child(ci, 0)
+                if child_item.checkState() == Qt.CheckState.Checked:
+                    id_item = parent.child(ci, 1)
+                    checked_ids.append(id_item.text())
+        return checked_ids
 
 
-        return visible_items
-    
-    def paint_header(self):
-        # start = time.perf_counter()
-        self._virtual_header_items = self.get_visible_items()
-        
-        region = QRegion()
-        for item in self._virtual_header_items:
-            pos_in_viewport = item.mapTo(self._viewport, item.rect().topLeft())
-            view_y = pos_in_viewport.y()
 
 
-            if view_y - item.parent_header_height < 0:
-                pos_y = view_y * -1
-                max_pos_y = item.height() - item.header_size.height() - item.parent_header_height
-                pos_y = pos_y if pos_y < max_pos_y else max_pos_y
-                header_pos_y = pos_y + item.parent_header_height
-
-            else:
-                header_pos_y = 0
-
-
-            header_rect = QRect(pos_in_viewport + QPoint(0, header_pos_y), item.header_size)
-            self._virtual_header_items[item] = header_rect
-            region += QRegion(header_rect)
-
-        self.setMask(region)
-
-        # end = time.perf_counter()
-        # elapsed_ms = (end - start) * 1000
-        # print(f"処理時間: {elapsed_ms:.3f} ミリ秒")
-        self.update()
-
-    def draw_button(self, painter:QPainter, item:VirtualBuittonHeader, y_offset:int):
-
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        fm = QFontMetrics(self.font())
-
-
-        for btn_id, static_text, width, rect in item.button_data:
-            if (item, btn_id) == self._curren_button:
-                # painter.setBrush(self._button_hover_bg_color)
-                painter.setBrush(QColor(220,220,220))
-                # if self._is_mouse_pressed:
-                #     painter.setBrush(self._button_press_bg_color)
-                # else:
-                #     painter.setBrush(self._button_hover_bg_color)
-            else:
-                # painter.setBrush(self._button_bg_color)
-                painter.setBrush(QColor(255,255,255))
-
-            rect:QRect
-
-            # painter.setBrush(QColor(255,255,255))
-
-            rect = rect.translated(0, y_offset)
-
-            painter.setPen(QPen(QColor(100, 100, 100)))
-            radius = int(item._button_height / 2)
-            painter.drawRoundedRect(rect, radius, radius)
-
-            text_x = rect.left() + item._button_padding_x
-            text_y = rect.top() + (rect.height() - fm.height()) // 2
-            painter.drawStaticText(text_x, text_y, static_text)
-
-
-    def paintEvent(self, event:QPaintEvent):
-
-        painter = QPainter(self)
-
-        for item, rect in self._virtual_header_items.items():
-            if isinstance(item, GroupItem):
-                painter.setBrush(QBrush(QColor(255, 10, 10)))
-            else:
-                painter.setBrush(QBrush(QColor(10, 255, 10)))
-
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRect(rect)
-
-            self.draw_button(painter, item, rect.y())
-
-        # 背景の描画
-        
-        # painter.setBrush(QBrush(QColor(255, 255, 0)))
-        # painter.setPen(Qt.PenStyle.NoPen)
-        # painter.drawRect(self.rect())
-        # painter.end()
-
-
-class ScrollAreaTest(QWidget):
+class FilterWidget(QWidget):
     def __init__(self, parent=None):
-        super().__init__(parent=parent)
+        super().__init__(parent)
+
+        self.resize(400,800)
 
         layout = QVBoxLayout(self)
 
-        self._scroll_area = CustomScrollArea()
-        self._scroll_area.setWidgetResizable(True)
+        gd = GlobalData()
 
-        layout.addWidget(self._scroll_area)
-        content_widget = QWidget()        
-        self._scroll_area.setWidget(content_widget)
+        group_datas = gd.get_group_datas()
 
-        layout = QVBoxLayout(content_widget)
-        layout.addWidget(GroupArea())
+        self._group_filter_id_combo = QComboBox()
+        self._group_filter_id_combo.addItem("")
+        self._group_filter_id_combo.addItems(group_datas.keys())        
+        layout.addWidget(self._group_filter_id_combo)
 
-        header_painter = HeaderPainter(self._scroll_area)
-        header_painter.raise_()
+        self._group_filter_id_combo.currentIndexChanged.connect(self.update_filter)
+
+        self._is_show_other_group_users = QCheckBox("他グループメンバー表示")
+        self._is_show_other_group_users.checkStateChanged.connect(self.update_filter)
+        layout.addWidget(self._is_show_other_group_users)
+
+        self._is_show_project_member = QCheckBox("プロジェクト内メンバー表示")
+        self._is_show_project_member.checkStateChanged.connect(self.update_filter)
+        layout.addWidget(self._is_show_project_member)
+
+        self._is_hide_empty_user_item = QCheckBox("空ユーザーアイテム非表示")
+        self._is_hide_empty_user_item.checkStateChanged.connect(self.update_filter)
+        layout.addWidget(self._is_hide_empty_user_item)
+
+
+        self._tree = CheckTreeView()
+        self._tree.item_selection_changed.connect(self.update_filter)
+        
+        layout.addWidget(self._tree)
+
+        self.update_filter()
+
+
+    def update_filter(self, *args, **kwargs):
+        filter_group_id = self._group_filter_id_combo.currentText()
+        data = self.create_filter_data(filter_group_id)
+        
+        
+    def create_filter_data(self, filter_group_id:str):
+
+        start = time.time()
+        gd = GlobalData()
+
+        user_datas = gd.get_user_datas ()
+        group_datas = gd.get_group_datas ()
+
+        project_datas = gd.get_project_datas ()
+        time_row_datas = gd.get_time_row_datas()
+
+        # プロパティ
+        is_show_other_group_users = self._is_show_other_group_users.isChecked()
+        is_show_project_member = self._is_show_project_member.isChecked()
+        is_hide_empty_user_item = self._is_hide_empty_user_item.isChecked()
+
+        
+        # グループフィルターで取得するユーザーID
+        all_data_dict:dict[str, dict[str,dict[str,dict[str:str]]]] = {}
+        """
+        all_data_dict
+        group_id:{
+            user_id(pic_user_id):{
+                project_id:{
+                    time_row_id:user_id
+                }
+            }
+        }
+        """
+
+        is_group_filter = (filter_group_id != "" and filter_group_id in group_datas)
+        
+        for group_id in group_datas.keys():
+            all_data_dict[group_id] = {}
+
+        for user_id, user_data in user_datas.items():
+            group_id = user_data["group_id"]
+            if group_id in all_data_dict:
+                all_data_dict[group_id][user_id] = {}
+
+        for project_id, project_data in project_datas.items():
+            pic_user_id = project_data["pic_user_id"]
+            if pic_user_id in user_datas:
+                group_id = user_datas[pic_user_id]["group_id"]
+                if group_id in all_data_dict:
+                    all_data_dict[group_id][pic_user_id][project_id] = {}
+
+        for time_row_id, time_row_data in time_row_datas.items():
+            project_id = time_row_data["project_id"]
+            if project_id in project_datas:
+                pic_user_id = project_datas[project_id]["pic_user_id"]
+                if pic_user_id in user_datas:
+                    group_id = user_datas[pic_user_id]["group_id"]
+                    if group_id in all_data_dict:
+                        user_id = time_row_data["user_id"]
+                        if user_id in user_datas:
+                            all_data_dict[group_id][pic_user_id][project_id][time_row_id] = user_id
+
+        if not is_group_filter:
+            "グループフィルターなし"
+            group_filter_target_user_ids = {user_id for user_id, user_data in user_datas.items() if user_data["group_id"] in group_datas}
+        else:
+            "グループフィルターあり"
+            group_filter_target_user_ids = {user_id for user_id, user_data in user_datas.items() if user_data["group_id"] == filter_group_id}
+
+        group_filterd_time_row_dict:dict[str,str|set[str]] = {} # グループフィルター適用時に表示するTimeRowのデータ
+        for group_id, users in all_data_dict.items():
+
+            for pic_user_id, projects in users.items():
+                for project_id, row_user_data in projects.items():
+
+                    project_member_time_row_ids = set(row_user_data.keys())
+                    project_member_user_ids = set(row_user_data.values())
+
+                    if not is_group_filter or group_id == filter_group_id:
+                        # フィルターなし、もしくはグループフィルターのターゲットの場合は全て表示
+
+                        group_filterd_time_row_dict.update({
+                            k: {
+                                "user_id": v,
+                                "project_id":project_id,
+                                "pic_user_id": pic_user_id,
+                                "project_group_id": group_id,
+                                "project_member_time_row_ids":set(project_member_time_row_ids),
+                                "project_member_user_ids":set(project_member_user_ids),
+                            }
+                            for k, v in zip(row_user_data.keys(), row_user_data.values())
+                        })
+
+                    else:
+                        # グループフィルターではない場合
+                        if not project_member_user_ids.isdisjoint(group_filter_target_user_ids):
+                            # グループフィルター対象外のグループのプロジェクトメンバーにユーザーが含まれる
+
+                            if is_show_other_group_users:
+                                # 別グループのプロジェクト内の他のメンバーを表示する
+
+                                group_filterd_time_row_dict.update({
+                                    k: {
+                                        "user_id": v,
+                                        "project_id":project_id,
+                                        "pic_user_id": pic_user_id,
+                                        "project_group_id": group_id,
+                                        "project_member_time_row_ids":set(project_member_time_row_ids),
+                                        "project_member_user_ids":set(project_member_user_ids),
+                                    }
+                                    for k, v in zip(row_user_data.keys(), row_user_data.values())
+                                })
+
+                            else:
+                                # 別グループプロジェクト内の他のメンバーは表示しない
+                                for time_row_id, user_id in row_user_data.items():
+                                    if user_id in group_filter_target_user_ids:
+                                        group_filterd_time_row_dict[time_row_id] = {
+                                            "user_id": user_id,
+                                            "project_id":project_id,
+                                            "pic_user_id": pic_user_id,
+                                            "project_group_id": group_id,
+                                            "project_member_time_row_ids":set(project_member_time_row_ids),
+                                            "project_member_user_ids":set(project_member_user_ids),
+                                        }
+
+
+        # UserFilterTreeに表示するグループフィルター後のグループ、ユーザーアイテムを設定
+        user_filter_model_data:dict[tuple[str],set[str]] = {}
+        for time_row_id, data in group_filterd_time_row_dict.items():
+            user_id = data["user_id"]
+            group_id = user_datas[user_id]["group_id"]
+            group_name = group_datas[group_id]["group_name"]
+            group_key = (group_name, group_id)
+            user_name = user_datas[user_id]["user_name"]
+            if group_key not in user_filter_model_data:
+                user_filter_model_data[group_key] = set()
+            user_filter_model_data[group_key].add((user_name, user_id))
+        
+        # Treeを設定
+        self._tree.update_date(user_filter_model_data)
+
+        # ユーザーフィルター
+        user_filter_ids = self._tree.get_checked_ids()
+        is_user_filter_on = len(user_filter_ids) > 0
+        
+
+        # 表示するtime_row_idとtime_view_user_item_user_idを取得
+        show_time_row_id = set()
+        show_time_view_user_item_ids = set()
+        if is_user_filter_on:
+            for time_row_id, data in group_filterd_time_row_dict.items():
+                user_id = data["user_id"]
+                if user_id in user_filter_ids:
+                    show_time_row_id.add(time_row_id) # time_row_id 追加
+                    show_time_view_user_item_ids.add(user_id) # user_id 追加
+
+                if is_show_project_member:
+                    show_time_row_id = show_time_row_id.union(data["project_member_time_row_ids"]) # time_row_id 追加
+                    show_time_view_user_item_ids = show_time_view_user_item_ids.union(data["project_member_user_ids"]) # time_row_id 追加
+        else:
+            show_time_row_id = set(group_filterd_time_row_dict.keys()) # time_row_id 追加
+            show_time_view_user_item_ids = {data["user_id"] for data in group_filterd_time_row_dict.values()}
+
+
+        # 表示するProjectItemのproject_idを取得
+        show_project_dict = {}
+        for time_row_id, data in group_filterd_time_row_dict.items():
+            project_id = data["project_id"]
+            if time_row_id in show_time_row_id and project_id not in show_project_dict:
+                show_project_dict[project_id] = {
+                    "group_id": data["project_group_id"],
+                    "pic_user_id": data["pic_user_id"],
+                }
+        show_project_ids = set(show_project_dict.keys())
+
+        # 表示するUserItemのuser_idを取得
+        show_time_edit_user_item_ids = set()
+
+        if not is_user_filter_on:
+            # ユーザーフィルターなし
+
+            if not is_group_filter:
+                # グループフィルターなし
+
+                if not is_hide_empty_user_item:
+                    # 空アイテムを表示する (全て)
+                    for value in all_data_dict.values():
+                        show_time_edit_user_item_ids = show_time_edit_user_item_ids.union(set(value.keys()))
+
+                else:
+                    # 空アイテムは表示しない
+
+                    # 表示するプロジェクトのpic_user_idのユーザーアイテムを表示する
+                    show_time_edit_user_item_ids = {
+                        data["pic_user_id"] for data in show_project_dict.values()
+                    }
+
+                    # 各グループ従属ユーザー追加
+                    show_time_edit_user_item_ids = show_time_edit_user_item_ids.union(
+                        {user_id for user_id, user_data in user_datas.items() if user_id == user_data["group_id"]}
+                    )
+
+            else:
+                # グループフィルターあり
+                
+                # 表示するプロジェクトのpic_user_idのユーザーアイテムを表示する
+                show_time_edit_user_item_ids = {
+                    data["pic_user_id"] for data in show_project_dict.values()
+                }
+
+                # グループ従属ユーザー追加
+                if filter_group_id in user_datas:
+                    show_time_edit_user_item_ids.add(filter_group_id)
+
+                # 空アイテムを表示する
+                if not is_hide_empty_user_item:
+                    show_time_edit_user_item_ids = show_time_edit_user_item_ids.union(group_filter_target_user_ids)
+        else:
+            # ユーザーフィルターあり
+            show_time_edit_user_item_ids = {
+                data["pic_user_id"] for data in show_project_dict.values()
+            }
+
+        show_time_edit_group_item_ids = {user_datas[user_id]["group_id"] for user_id in show_time_edit_user_item_ids}
+        show_time_view_group_item_ids = {user_datas[user_id]["group_id"] for user_id in show_time_view_user_item_ids}
+
+        end = time.time()
+        print(f"実行時間：{end - start:.6f} 秒")
+
+        result = {
+            "show_time_view_user_item_ids": show_time_view_user_item_ids,
+            "show_time_view_group_item_ids": show_time_view_group_item_ids,
+            "show_time_edit_group_item_ids": show_time_edit_group_item_ids,
+            "show_time_edit_user_item_ids": show_time_edit_user_item_ids,
+            "show_project_ids": show_project_ids,
+            "show_time_row_id": show_time_row_id,
+        }
+
+        return result
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+
+
+    db_filename = r"C:/HukazumiTest/Banana.db"
+    db_manager = DatabaseManager()
+
+    db_manager.create_database(db_filename)
+
+    db_manager.init_database(db_filename)
+
+    gd = GlobalData()
+
+    # データベースから取得
+    user_datas = db_manager.get_table_id_dict("Users")
+    gd.set_user_datas(user_datas)
+
+    group_datas = db_manager.get_table_id_dict("Groups")
+    gd.set_group_datas(group_datas)
+
+    project_datas = db_manager.get_table_id_dict("Projects")
+    gd.set_project_datas(project_datas)
+
+    time_row_datas = db_manager.get_table_id_dict("TimeRows")
+    gd.set_time_row_datas(time_row_datas)
+
+    
+    window = FilterWidget()    
+    window.show()
+
+    sys.exit(app.exec())
